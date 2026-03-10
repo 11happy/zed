@@ -732,7 +732,7 @@ fn matching_history_items<'a>(
     let history_items_by_worktrees = history_items
         .into_iter()
         .chain(currently_opened)
-        .filter_map(|found_path| {
+        .map(|found_path| {
             let candidate = PathMatchCandidate {
                 is_dir: false, // You can't open directories as project items
                 path: &found_path.project.path,
@@ -741,7 +741,7 @@ fn matching_history_items<'a>(
                 // it would be shown first always, despite the latter being a better match.
             };
             candidates_paths.insert(&found_path.project, found_path);
-            Some((found_path.project.worktree_id, candidate))
+            (found_path.project.worktree_id, candidate)
         })
         .fold(
             HashMap::default(),
