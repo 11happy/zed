@@ -129,9 +129,16 @@ fn path_match_helper<'a>(
         if let Some(score) = pattern.indices(haystack, matcher, &mut indices) {
             let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
             let filename_start = candidate_buf.rfind('/').map_or(0, |i| i + 1);
-            let filename_bonus = indices
+            let filename_len = (candidate_buf.len() - filename_start).max(1);
+
+            let filename_match_count = indices
                 .iter()
-                .all(|&i| i as usize >= filename_start)
+                .filter(|&&i| i as usize >= filename_start)
+                .count();
+
+            let all_in_filename = filename_match_count == indices.len();
+            let density = filename_match_count as f64 / filename_len as f64;
+            let filename_bonus = (all_in_filename && density > 0.5)
                 .then_some(FILENAME_BONUS)
                 .unwrap_or(0.0);
             let adjusted_score = score as f64 + filename_bonus - length_penalty;
