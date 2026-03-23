@@ -87,6 +87,25 @@ pub(crate) fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> u
     path_components.count() + relative_components.count() + 1
 }
 
+fn get_filename_match_bonus(indices: &[u32], candidate_buf: &str) -> f64 {
+    let filename_start = candidate_buf.rfind('/').map_or(0, |i| i + 1);
+    let filename_len = (candidate_buf.len() - filename_start).max(1);
+
+    let filename_match_count = indices
+        .iter()
+        .filter(|&&i| i as usize >= filename_start)
+        .count();
+
+    let all_in_filename = filename_match_count == indices.len();
+    let density = filename_match_count as f64 / filename_len as f64;
+
+    // Bonus when all query chars match within the filename and
+    // cover more than half of it, rewarding dense filename matches.
+    (all_in_filename && density > 0.5)
+        .then_some(FILENAME_BONUS)
+        .unwrap_or(0.0)
+}
+
 struct Cancelled;
 
 fn path_match_helper<'a>(
@@ -128,19 +147,7 @@ fn path_match_helper<'a>(
 
         if let Some(score) = pattern.indices(haystack, matcher, &mut indices) {
             let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
-            let filename_start = candidate_buf.rfind('/').map_or(0, |i| i + 1);
-            let filename_len = (candidate_buf.len() - filename_start).max(1);
-
-            let filename_match_count = indices
-                .iter()
-                .filter(|&&i| i as usize >= filename_start)
-                .count();
-
-            let all_in_filename = filename_match_count == indices.len();
-            let density = filename_match_count as f64 / filename_len as f64;
-            let filename_bonus = (all_in_filename && density > 0.5)
-                .then_some(FILENAME_BONUS)
-                .unwrap_or(0.0);
+            let filename_bonus = get_filename_match_bonus(&indices, &candidate_buf);
             let adjusted_score = score as f64 + filename_bonus - length_penalty;
             let mut positions: Vec<usize> = candidate_buf
                 .char_indices()

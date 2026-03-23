@@ -4243,18 +4243,14 @@ async fn test_filename_preferred_over_directory_match(cx: &mut TestAppContext) {
 
     picker
         .update_in(cx, |picker, window, cx| {
-            picker.delegate.spawn_search(
-                test_path_position("settings audio"),
-                window,
-                cx,
-            )
+            picker
+                .delegate
+                .spawn_search(test_path_position("settings audio"), window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
         let matches = collect_search_matches(picker).search_matches_only();
-        assert!(
-            !matches.is_empty(),
-        );
+        assert!(!matches.is_empty(),);
         assert_eq!(
             matches[0].path.as_unix_str(),
             "crates/audio/src/audio_settings.rs"
@@ -4293,18 +4289,14 @@ async fn test_start_of_word_preferred_over_scattered_match(cx: &mut TestAppConte
 
     picker
         .update_in(cx, |picker, window, cx| {
-            picker.delegate.spawn_search(
-                test_path_position("live pla"),
-                window,
-                cx,
-            )
+            picker
+                .delegate
+                .spawn_search(test_path_position("live pla"), window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
         let matches = collect_search_matches(picker).search_matches_only();
-        assert!(
-            !matches.is_empty(),
-        );
+        assert!(!matches.is_empty(),);
         assert_eq!(
             matches[0].path.as_unix_str(),
             "crates/livekit_client/src/livekit_client/playback.rs",
@@ -4344,18 +4336,14 @@ async fn test_exact_filename_stem_preferred(cx: &mut TestAppContext) {
 
     picker
         .update_in(cx, |picker, window, cx| {
-            picker.delegate.spawn_search(
-                test_path_position("nix icon"),
-                window,
-                cx,
-            )
+            picker
+                .delegate
+                .spawn_search(test_path_position("nix icon"), window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
         let matches = collect_search_matches(picker).search_matches_only();
-        assert!(
-            !matches.is_empty(),
-        );
+        assert!(!matches.is_empty(),);
         assert_eq!(
             matches[0].path.as_unix_str(),
             "assets/icons/file_icons/nix.svg",
@@ -4389,18 +4377,14 @@ async fn test_exact_filename_with_directory_token(cx: &mut TestAppContext) {
 
     picker
         .update_in(cx, |picker, window, cx| {
-            picker.delegate.spawn_search(
-                test_path_position("acp server"),
-                window,
-                cx,
-            )
+            picker
+                .delegate
+                .spawn_search(test_path_position("acp server"), window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
         let matches = collect_search_matches(picker).search_matches_only();
-        assert!(
-            !matches.is_empty(),
-        );
+        assert!(!matches.is_empty(),);
         assert_eq!(
             matches[0].path.as_unix_str(),
             "crates/agent_servers/src/acp.rs",
