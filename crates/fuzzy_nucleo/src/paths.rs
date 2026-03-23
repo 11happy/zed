@@ -22,7 +22,6 @@ pub struct PathMatchCandidate<'a> {
 #[derive(Clone, Debug)]
 pub struct PathMatch {
     pub score: f64,
-    /// Rendering code may panic if positions are unsorted
     pub positions: Vec<usize>,
     pub worktree_id: usize,
     pub path: Arc<RelPath>,
@@ -136,7 +135,7 @@ fn path_match_helper<'a>(
                 .then_some(FILENAME_BONUS)
                 .unwrap_or(0.0);
             let adjusted_score = score as f64 + filename_bonus - length_penalty;
-            let positions: Vec<usize> = candidate_buf
+            let mut positions: Vec<usize> = candidate_buf
                 .char_indices()
                 .enumerate()
                 .filter_map(|(char_offset, (byte_offset, _))| {
@@ -145,6 +144,7 @@ fn path_match_helper<'a>(
                         .then_some(byte_offset)
                 })
                 .collect();
+            positions.sort_unstable();
 
             results.push(PathMatch {
                 score: adjusted_score,
