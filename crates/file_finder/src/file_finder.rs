@@ -771,6 +771,7 @@ fn matching_history_items<'a>(
                 path_style,
             )
             .into_iter()
+            // filter matches where at least one matched position is in filename portion, to prevent diectory matches, nucleo scores them higher as history items are matched against their full path
             .filter(|path_match| {
                 if let Some(filename) = path_match.path.file_name() {
                     let filename_start = path_match.path.as_unix_str().len() - filename.len();

@@ -11,6 +11,8 @@ use util::{paths::PathStyle, rel_path::RelPath};
 use nucleo::Utf32Str;
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 
+use crate::matcher::{self, FILENAME_BONUS, LENGTH_PENALTY};
+
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
     pub is_dir: bool,
@@ -20,6 +22,7 @@ pub struct PathMatchCandidate<'a> {
 #[derive(Clone, Debug)]
 pub struct PathMatch {
     pub score: f64,
+    /// Rendering code may panic if positions are unsorted
     pub positions: Vec<usize>,
     pub worktree_id: usize,
     pub path: Arc<RelPath>,
@@ -125,8 +128,14 @@ fn path_match_helper<'a>(
         let haystack = Utf32Str::new(&candidate_buf, &mut buf);
 
         if let Some(score) = pattern.indices(haystack, matcher, &mut indices) {
-            let length_penalty = candidate_buf.len() as f64 * 0.001;
-            let adjusted_score = score as f64 - length_penalty;
+            let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
+            let filename_start = candidate_buf.rfind('/').map_or(0, |i| i + 1);
+            let filename_bonus = indices
+                .iter()
+                .all(|&i| i as usize >= filename_start)
+                .then_some(FILENAME_BONUS)
+                .unwrap_or(0.0);
+            let adjusted_score = score as f64 + filename_bonus - length_penalty;
             let positions: Vec<usize> = candidate_buf
                 .char_indices()
                 .enumerate()
@@ -174,7 +183,7 @@ pub fn match_fixed_path_set(
 ) -> Vec<PathMatch> {
     let mut config = nucleo::Config::DEFAULT;
     config.set_match_paths();
-    let mut matcher = nucleo::Matcher::new(config);
+    let mut matcher = matcher::get_matcher(config);
 
     let pattern = Pattern::new(
         query,
@@ -207,6 +216,7 @@ pub fn match_fixed_path_set(
     )
     .ok();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    matcher::return_matcher(matcher);
     results
 }
 
@@ -248,25 +258,24 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
-
+    let mut config = nucleo::Config::DEFAULT;
+    config.set_match_paths();
+    let mut matchers = matcher::get_matchers(num_cpus, config);
     executor
         .scoped(|scope| {
-            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+            for (segment_idx, (results, matcher)) in segment_results
+                .iter_mut()
+                .zip(matchers.iter_mut())
+                .enumerate()
+            {
                 let pattern = pattern.clone();
                 let relative_to = relative_to.clone();
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
-                    let mut config = nucleo::Config::DEFAULT;
-                    config.set_match_paths();
-                    let mut matcher = nucleo::Matcher::new(config);
 
                     let mut tree_start = 0;
                     for candidate_set in candidate_sets {
-                        if cancel_flag.load(atomic::Ordering::Acquire) {
-                            break;
-                        }
-
                         let tree_end = tree_start + candidate_set.len();
 
                         if tree_start < segment_end && segment_start < tree_end {
@@ -275,7 +284,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let candidates = candidate_set.candidates(start).take(end - start);
 
                             if path_match_helper(
-                                &mut matcher,
+                                matcher,
                                 &pattern,
                                 candidates,
                                 results,
@@ -302,6 +311,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         })
         .await;
 
+    matcher::return_matchers(matchers);
     if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();
     }
