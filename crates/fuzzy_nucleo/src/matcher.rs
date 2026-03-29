@@ -2,7 +2,6 @@ use std::sync::Mutex;
 
 static MATCHERS: Mutex<Vec<nucleo::Matcher>> = Mutex::new(Vec::new());
 
-pub const FILENAME_BONUS: f64 = 100.0;
 pub const LENGTH_PENALTY: f64 = 0.01;
 
 pub fn get_matcher(config: nucleo::Config) -> nucleo::Matcher {

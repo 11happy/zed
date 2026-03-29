@@ -9,9 +9,9 @@ use std::{
 use util::{paths::PathStyle, rel_path::RelPath};
 
 use nucleo::Utf32Str;
-use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 
-use crate::matcher::{self, FILENAME_BONUS, LENGTH_PENALTY};
+use crate::matcher::{self, LENGTH_PENALTY};
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
@@ -74,6 +74,18 @@ impl Ord for PathMatch {
     }
 }
 
+fn make_atoms(query: &str, smart_case: bool) -> Vec<Atom> {
+    let case = if smart_case {
+        CaseMatching::Smart
+    } else {
+        CaseMatching::Ignore
+    };
+    query
+        .split_whitespace()
+        .map(|word| Atom::new(word, case, Normalization::Smart, AtomKind::Fuzzy, false))
+        .collect()
+}
+
 pub(crate) fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
     let mut path_components = path.components();
     let mut relative_components = relative_to.components();
@@ -87,30 +99,32 @@ pub(crate) fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> u
     path_components.count() + relative_components.count() + 1
 }
 
-fn get_filename_match_bonus(indices: &[u32], candidate_buf: &str) -> f64 {
+fn get_filename_match_bonus(
+    candidate_buf: &str,
+    query_atoms: &[Atom],
+    matcher: &mut nucleo::Matcher,
+) -> f64 {
     let filename_start = candidate_buf.rfind('/').map_or(0, |i| i + 1);
-    let filename_len = (candidate_buf.len() - filename_start).max(1);
-
-    let filename_match_count = indices
-        .iter()
-        .filter(|&&i| i as usize >= filename_start)
-        .count();
-
-    let all_in_filename = filename_match_count == indices.len();
-    let density = filename_match_count as f64 / filename_len as f64;
-
-    // Bonus when all query chars match within the filename and
-    // cover more than half of it, rewarding dense filename matches.
-    (all_in_filename && density > 0.5)
-        .then_some(FILENAME_BONUS)
-        .unwrap_or(0.0)
+    let filename = &candidate_buf[filename_start..];
+    if filename.is_empty() || query_atoms.is_empty() {
+        return 0.0;
+    }
+    let mut buf = Vec::new();
+    let haystack = Utf32Str::new(filename, &mut buf);
+    let mut total_score = 0u32;
+    for atom in query_atoms {
+        if let Some(score) = atom.score(haystack, matcher) {
+            total_score = total_score.saturating_add(score as u32);
+        }
+    }
+    let filename_len = filename.len().max(1) as f64;
+    total_score as f64 / filename_len
 }
-
 struct Cancelled;
 
 fn path_match_helper<'a>(
     matcher: &mut nucleo::Matcher,
-    pattern: &Pattern,
+    atoms: &[Atom],
     candidates: impl Iterator<Item = PathMatchCandidate<'a>>,
     results: &mut Vec<PathMatch>,
     worktree_id: usize,
@@ -128,8 +142,12 @@ fn path_match_helper<'a>(
         String::new()
     };
     let path_prefix_len = candidate_buf.len();
-
+    let mut buf = Vec::new();
+    let mut all_indices: Vec<u32> = Vec::new();
+    let mut atom_indices = Vec::new();
     for candidate in candidates {
+        buf.clear();
+        all_indices.clear();
         if cancel_flag.load(atomic::Ordering::Relaxed) {
             return Err(Cancelled);
         }
@@ -141,19 +159,34 @@ fn path_match_helper<'a>(
             candidate_buf.push_str(candidate.path.as_unix_str());
         }
 
-        let mut indices = Vec::new();
-        let mut buf = Vec::new();
         let haystack = Utf32Str::new(&candidate_buf, &mut buf);
 
-        if let Some(score) = pattern.indices(haystack, matcher, &mut indices) {
+        let mut total_score: u32 = 0;
+        let mut all_matched = true;
+
+        for atom in atoms {
+            atom_indices.clear();
+            if let Some(score) = atom.indices(haystack, matcher, &mut atom_indices) {
+                total_score = total_score.saturating_add(score as u32);
+                all_indices.extend_from_slice(&atom_indices);
+            } else {
+                all_matched = false;
+                break;
+            }
+        }
+
+        if all_matched && !atoms.is_empty() {
+            all_indices.sort_unstable();
+            all_indices.dedup();
+
             let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
-            let filename_bonus = get_filename_match_bonus(&indices, &candidate_buf);
-            let adjusted_score = score as f64 + filename_bonus - length_penalty;
+            let filename_bonus = get_filename_match_bonus(&candidate_buf, atoms, matcher);
+            let adjusted_score = total_score as f64 + filename_bonus - length_penalty;
             let mut positions: Vec<usize> = candidate_buf
                 .char_indices()
                 .enumerate()
                 .filter_map(|(char_offset, (byte_offset, _))| {
-                    indices
+                    all_indices
                         .contains(&(char_offset as u32))
                         .then_some(byte_offset)
                 })
@@ -199,16 +232,7 @@ pub fn match_fixed_path_set(
     config.set_match_paths();
     let mut matcher = matcher::get_matcher(config);
 
-    let pattern = Pattern::new(
-        query,
-        if smart_case {
-            CaseMatching::Smart
-        } else {
-            CaseMatching::Ignore
-        },
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-    );
+    let atoms = make_atoms(query, smart_case);
 
     let root_is_file = worktree_root_name.is_some() && candidates.iter().all(|c| c.path.is_empty());
 
@@ -218,7 +242,7 @@ pub fn match_fixed_path_set(
 
     path_match_helper(
         &mut matcher,
-        &pattern,
+        &atoms,
         candidates.into_iter(),
         &mut results,
         worktree_id,
@@ -256,16 +280,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         query.to_owned()
     };
 
-    let pattern = Pattern::new(
-        &query,
-        if smart_case {
-            CaseMatching::Smart
-        } else {
-            CaseMatching::Ignore
-        },
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-    );
+    let atoms = make_atoms(&query, smart_case);
 
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
@@ -282,7 +297,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                 .zip(matchers.iter_mut())
                 .enumerate()
             {
-                let pattern = pattern.clone();
+                let atoms = atoms.clone();
                 let relative_to = relative_to.clone();
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
@@ -299,7 +314,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
                             if path_match_helper(
                                 matcher,
-                                &pattern,
+                                &atoms,
                                 candidates,
                                 results,
                                 candidate_set.id(),

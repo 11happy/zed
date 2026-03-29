@@ -664,15 +664,6 @@ impl Matches {
 
         // For file-vs-file matches, use the existing detailed comparison.
         if let (Some(a_panel), Some(b_panel)) = (a.panel_match(), b.panel_match()) {
-            let a_in_filename = Self::is_filename_match(a_panel);
-            let b_in_filename = Self::is_filename_match(b_panel);
-
-            match (a_in_filename, b_in_filename) {
-                (true, false) => return cmp::Ordering::Greater,
-                (false, true) => return cmp::Ordering::Less,
-                _ => {}
-            }
-
             return a_panel.cmp(b_panel);
         }
 
@@ -691,32 +682,6 @@ impl Matches {
             Match::Channel { string_match, .. } => string_match.score,
             Match::CreateNew(_) => 0.0,
         }
-    }
-
-    /// Determines if the match occurred within the filename rather than in the path
-    fn is_filename_match(panel_match: &ProjectPanelOrdMatch) -> bool {
-        if panel_match.0.positions.is_empty() {
-            return false;
-        }
-
-        if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_unix_str();
-
-            if let Some(filename_pos) = path_str.rfind(filename)
-                && panel_match.0.positions[0] >= filename_pos
-            {
-                let mut prev_position = panel_match.0.positions[0];
-                for p in &panel_match.0.positions[1..] {
-                    if *p != prev_position + 1 {
-                        return false;
-                    }
-                    prev_position = *p;
-                }
-                return true;
-            }
-        }
-
-        false
     }
 }
 
