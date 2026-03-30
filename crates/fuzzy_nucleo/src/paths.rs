@@ -104,7 +104,7 @@ fn get_filename_match_bonus(
     query_atoms: &[Atom],
     matcher: &mut nucleo::Matcher,
 ) -> f64 {
-    let filename_start = candidate_buf.rfind('/').map_or(0, |i| i + 1);
+    let filename_start = candidate_buf.rfind(['/', '\\']).map_or(0, |i| i + 1);
     let filename = &candidate_buf[filename_start..];
     if filename.is_empty() || query_atoms.is_empty() {
         return 0.0;
