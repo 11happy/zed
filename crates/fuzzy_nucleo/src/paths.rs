@@ -104,8 +104,10 @@ fn get_filename_match_bonus(
     query_atoms: &[Atom],
     matcher: &mut nucleo::Matcher,
 ) -> f64 {
-    let filename_start = candidate_buf.rfind(['/', '\\']).map_or(0, |i| i + 1);
-    let filename = &candidate_buf[filename_start..];
+    let filename = match std::path::Path::new(candidate_buf).file_name() {
+        Some(f) => f.to_str().unwrap_or(""),
+        None => return 0.0,
+    };
     if filename.is_empty() || query_atoms.is_empty() {
         return 0.0;
     }
@@ -117,8 +119,7 @@ fn get_filename_match_bonus(
             total_score = total_score.saturating_add(score as u32);
         }
     }
-    let filename_len = filename.len().max(1) as f64;
-    total_score as f64 / filename_len
+    total_score as f64 / filename.len().max(1) as f64
 }
 struct Cancelled;
 
@@ -143,11 +144,11 @@ fn path_match_helper<'a>(
     };
     let path_prefix_len = candidate_buf.len();
     let mut buf = Vec::new();
-    let mut all_indices: Vec<u32> = Vec::new();
-    let mut atom_indices = Vec::new();
+    let mut matched_chars: Vec<u32> = Vec::new();
+    let mut atom_matched_chars = Vec::new();
     for candidate in candidates {
         buf.clear();
-        all_indices.clear();
+        matched_chars.clear();
         if cancel_flag.load(atomic::Ordering::Relaxed) {
             return Err(Cancelled);
         }
@@ -165,10 +166,10 @@ fn path_match_helper<'a>(
         let mut all_matched = true;
 
         for atom in atoms {
-            atom_indices.clear();
-            if let Some(score) = atom.indices(haystack, matcher, &mut atom_indices) {
+            atom_matched_chars.clear();
+            if let Some(score) = atom.indices(haystack, matcher, &mut atom_matched_chars) {
                 total_score = total_score.saturating_add(score as u32);
-                all_indices.extend_from_slice(&atom_indices);
+                matched_chars.extend_from_slice(&atom_matched_chars);
             } else {
                 all_matched = false;
                 break;
@@ -176,8 +177,8 @@ fn path_match_helper<'a>(
         }
 
         if all_matched && !atoms.is_empty() {
-            all_indices.sort_unstable();
-            all_indices.dedup();
+            matched_chars.sort_unstable();
+            matched_chars.dedup();
 
             let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
             let filename_bonus = get_filename_match_bonus(&candidate_buf, atoms, matcher);
@@ -186,7 +187,7 @@ fn path_match_helper<'a>(
                 .char_indices()
                 .enumerate()
                 .filter_map(|(char_offset, (byte_offset, _))| {
-                    all_indices
+                    matched_chars
                         .contains(&(char_offset as u32))
                         .then_some(byte_offset)
                 })
